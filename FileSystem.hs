@@ -86,8 +86,8 @@ toStringList (Folder name _ : xs) = getName name : toStringList xs
 
 rm :: [Name] -> Zipper -> Maybe Zipper
 rm [] t = Just t
-rm (x:xs) (Folder name content, z) = if x `elem` map getFileNodeName content
-  then rm xs (Folder name (filter (\ y -> getFileNodeName y /= x) content), z)
+rm (x:xs) (Folder name content, z) = if x `elem` map getFileNodeName (filter isFile content)
+  then rm xs (Folder name (filter (\ y -> not (isFile y && getFileNodeName y == x)) content), z)
   else rm xs (Folder name content, z)
 rm _ (File _ _, _) = Nothing
 
@@ -131,6 +131,9 @@ catFromConsole text = do
     catFromConsole (return (lastText ++ currentText))
    else text
 
+isValidOutput :: [String] -> Bool
+isValidOutput output = length output == 2 && head output == ">"
+
 endless :: Maybe Zipper -> IO()
 endless currentFileSystem = do
   print currentFileSystem
@@ -141,7 +144,7 @@ endless currentFileSystem = do
          let commandWithParams = splitOn " " commands
              command = head commandWithParams
              params = tail commandWithParams
-         case command of 
+         case command of
               "cd" -> when (length params == 1) $
                       endless (currentFileSystem >>= cd (toNameList (head params)))
               "touch" -> unless (null params) $
@@ -155,14 +158,17 @@ endless currentFileSystem = do
               "rm" -> endless (currentFileSystem >>= rm (map Name params))
               "cat" | ">" `elem` params ->
                       do let (input, output) = break (== ">") params
-                         if null input then
+                         case output of
+                          (">" : outFile : []) ->
+                           if null input then
                            do text <- catFromConsole (return "")
-                              endless $ currentFileSystem >>= addFile (toFile (output !! 1) text)
-                         else do let text = currentFileSystem >>= cat (map toNameList input)
-                                 case text of
+                              endless $ currentFileSystem >>= addFile (toFile outFile text)
+                           else do let text = currentFileSystem >>= cat (map toNameList input)
+                                   case text of
                                       Nothing -> return ()
                                       (Just content) -> endless $
-                                                     currentFileSystem >>= addFile (toFile (output !! 1) content)
+                                                     currentFileSystem >>= addFile (toFile outFile content)
+                          _ -> return ()
                     | null params ->
                       do text <- catFromConsole (return "")
                          print text
