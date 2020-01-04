@@ -1,3 +1,5 @@
+import Data.List.Split
+import Control.Monad (when, unless)
 newtype Name = Name {getName :: String} deriving Show
 
 instance Eq Name where
@@ -99,6 +101,75 @@ getFile name (Folder _ nodes, _) = let filteredNodes = filter (\ node -> getFile
                                        fileNodes = filter isFile filteredNodes
                                    in if null fileNodes then Nothing else Just (head fileNodes)
 
+myMappend :: Maybe String -> Maybe String -> Maybe String
+myMappend Nothing _ = Nothing
+myMappend _ Nothing = Nothing
+myMappend a b = mappend a b
+
 cat :: [[Name]] -> Zipper -> Maybe String
 cat [] _ = Just ""
-cat (x:xs) z = mappend (fmap getContent (fmap getFileNodeContent (cdFrom (init x) z >>= getFile (last x)))) (cat xs z) 
+cat (x:xs) z = myMappend (fmap (getContent . getFileNodeContent) (cdFrom (init x) z >>= getFile (last x))) (cat xs z)
+
+toNameList :: String -> [Name]
+toNameList "" = []
+toNameList s = map Name $ splitOn "/" s
+
+toFile :: String -> String -> FileNode
+toFile name content = File (Name name) (Content content)
+
+concatWithSpaces :: [String] -> String
+concatWithSpaces [] = ""
+concatWithSpaces [x] = x
+concatWithSpaces (x:xs) = x ++ " " ++ concatWithSpaces xs
+
+catFromConsole :: IO String -> IO String
+catFromConsole text = do 
+  currentText <- getLine
+  if currentText /= "."
+   then do
+    lastText <- text
+    catFromConsole (return (lastText ++ currentText))
+   else text
+
+endless :: Maybe Zipper -> IO()
+endless currentFileSystem = do
+  print currentFileSystem
+  commands <- getLine
+  if null commands
+    then endless currentFileSystem
+    else do
+         let commandWithParams = splitOn " " commands
+             command = head commandWithParams
+             params = tail commandWithParams
+         case command of 
+              "cd" -> when (length params == 1) $
+                      endless (currentFileSystem >>= cd (toNameList (head params)))
+              "touch" -> unless (null params) $
+                         endless (currentFileSystem >>= addFile (toFile (head params) (concatWithSpaces (tail params))))
+              "mkdir" -> when (length params == 1) $
+                         endless (currentFileSystem >>= addFile (Folder (Name (head params)) []))
+              "ls" -> if null params
+                         then print (fmap (lsFrom []) currentFileSystem)
+                         else print (fmap (lsFrom (toNameList (head params))) currentFileSystem)
+              "pwd" -> print $ fmap pwd currentFileSystem
+              "rm" -> endless (currentFileSystem >>= rm (map Name params))
+              "cat" | ">" `elem` params ->
+                      do let (input, output) = break (== ">") params
+                         if null input then
+                           do text <- catFromConsole (return "")
+                              endless $ currentFileSystem >>= addFile (toFile (output !! 1) text)
+                         else do let text = currentFileSystem >>= cat (map toNameList input)
+                                 case text of
+                                      Nothing -> return ()
+                                      (Just content) -> endless $
+                                                     currentFileSystem >>= addFile (toFile (output !! 1) content)
+                    | null params ->
+                      do text <- catFromConsole (return "")
+                         print text
+                    | otherwise ->
+                      print $ currentFileSystem >>= cat (map toNameList params)
+              _ -> return ()
+         endless currentFileSystem
+
+main :: IO() 
+main = endless emptyFS
