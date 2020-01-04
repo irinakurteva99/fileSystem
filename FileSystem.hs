@@ -1,90 +1,104 @@
-type Name = String
-type Content = String
+newtype Name = Name {getName :: String} deriving Show
 
-data FileType = File Name Content | Folder Name [FileType] deriving Show
-
-data FileTracer = FileTracer Name [FileType] [FileType] deriving Show
-
-type FileZipper = (FileType, [FileTracer])
-
-makeEmptyFS :: FileZipper
-makeEmptyFS = (Folder "" [], [])
-
-addFile :: FileType -> FileZipper -> FileZipper
-addFile file (Folder name contents, t) = (Folder name (file : contents), t)
-addFile _ (File _ _, _) = error "cannot add file in file"
-
-goBack :: FileZipper -> FileZipper 
-goBack (item, FileTracer name ls rs:bs) = (Folder name (ls ++ [item] ++ rs), bs)
-
-goToRoot :: FileZipper -> FileZipper 
-goToRoot (x, []) = (x, [])
-goToRoot t = goToRoot (goBack t)
-
-goTo :: Name -> FileZipper -> FileZipper
-goTo name (Folder folderName items, bs) = 
-                  let (ls, item:rs) = break (nameIs name) items
-                  in (item, FileTracer folderName ls rs:bs)
-goTo _ (File _ _, _) = error "already at a file, cannot go forward"
-
-nameIs :: Name -> FileType -> Bool
-nameIs name (Folder folderName _) = name == folderName
-nameIs name (File fileName _) = False 
+instance Eq Name where
+  (==) (Name first) (Name second) = first == second
  
-pwd :: FileZipper -> String
-pwd (File name _, []) = "/" ++  name
-pwd (Folder name _, []) = "/" ++  name
-pwd (x, ls) = "/" ++ getName (last ls) ++ pwd (x, init ls) 
+newtype Content = Content {getContent :: String} deriving Show 
 
-getName :: FileTracer -> String
-getName (FileTracer name _ _) = name
+instance Eq Content where
+  (==) (Content first) (Content second) = first == second
 
-emptyFileSystem :: FileType
-emptyFileSystem = Folder "/" []
+data FileNode = File 
+  { getFileNodeName :: Name,
+    getFileNodeContent :: Content } | 
+                Folder 
+  { getFileNodeName :: Name,
+    getFolderContent :: [FileNode] } deriving Show
 
-ls :: [String] -> FileZipper -> [String]
-ls [] (File _ _, _) = []
-ls [] (Folder _ xs, _) = toStringList xs
-ls (x:xs) t = ls xs $ goTo x t
+instance Eq FileNode where
+  (==) (File firstName firstContent) (File secondName secondContent) = firstName == secondName && firstContent == secondContent
+  (==) (Folder firstName firstList) (Folder secondName secondList) = firstName == secondName && and (zipWith (==) firstList secondList)
+  (==) _ _ = False
 
+data FileZipper = FileZipper 
+  { getFileZipperName::Name,
+    left :: [FileNode],
+    right :: [FileNode] } deriving Show
 
-lsFrom :: [String] -> FileZipper -> [String] 
-lsFrom [] (Folder _ xs, _) = toStringList xs
-lsFrom ("":xs) t = ls xs (goToRoot t)
-lsFrom l t = ls l t
+type Zipper = (FileNode, [FileZipper])
 
-cd :: [String] -> FileZipper -> FileZipper
-cd [] t = t
-cd (x:xs) t = cd xs $ goTo x t
+emptyFS :: Maybe Zipper
+emptyFS = Just (Folder (Name "")  [], [])
 
-cdFrom :: [String] -> FileZipper -> FileZipper
-cdFrom [] t = t
-cdFrom ("":xs) t = cd xs (goToRoot t)
-cdFrom ls t = cd ls t
+addFile :: FileNode -> Zipper -> Maybe Zipper
+addFile file (Folder name contents, t) = Just (Folder name (file : contents), t)
+addFile _ (File _ _, _) = Nothing 
 
-toStringList :: [FileType] -> [String]
+goBack :: Zipper -> Maybe Zipper 
+goBack (item, FileZipper name ll rs:bs) = Just (Folder name (ll ++ [item] ++ rs), bs)
+goBack (t, []) = Just (t,[])
+
+goToRoot :: Zipper -> Maybe Zipper 
+goToRoot (x, []) = Just (x, [])
+goToRoot t = goBack t >>= goToRoot 
+
+goTo :: Name -> Zipper -> Maybe Zipper 
+goTo name (Folder folderName items, bs) = if null (dropWhile (not . equallFolderName name) items)
+  then Nothing 
+  else
+    let (ll, item:rs) = break (equallFolderName name) items
+    in Just (item, FileZipper folderName ll rs:bs)
+goTo _ (File _ _, _) = Nothing
+
+equallFolderName :: Name -> FileNode -> Bool
+equallFolderName name (Folder folderName _) = name == folderName
+equallFolderName _ (File _ _) = False
+
+pwd :: Zipper -> String
+pwd (File name _, []) = "/" ++  getName name
+pwd (Folder name _, []) = "/" ++  getName name
+pwd (x, ll) = "/" ++ getName (getFileZipperName (last ll)) ++ pwd (x, init ll)
+
+cd :: [Name] -> Zipper -> Maybe Zipper
+cd [] z = Just z
+cd (Name ".." : xs) z = goBack z >>= cd xs
+cd (x:xs) z = goTo x z >>= cd xs
+
+cdFrom :: [Name] -> Zipper -> Maybe Zipper
+cdFrom [] t = cd [] t
+cdFrom (Name "":xs) t = goToRoot t >>= cd xs
+cdFrom ll t = cd ll t
+
+ls :: Maybe Zipper -> [String]
+ls Nothing = []
+ls (Just (Folder _ ll, _)) = toStringList ll
+ls (Just (File _ _, _)) = []
+
+lsFrom :: [Name] -> Zipper -> [String]
+lsFrom path z = ls $ cdFrom path z
+
+toStringList :: [FileNode] -> [String]
 toStringList [] = []
-toStringList (File name _ : xs) = name : toStringList xs
-toStringList (Folder name _ : xs) = name : toStringList xs
+toStringList (File name _ : xs) = getName name : toStringList xs
+toStringList (Folder name _ : xs) = getName name : toStringList xs
 
-myDisk = 
-    Folder "root"   
-        [ File "goat_yelling_like_man.wmv" "baaaaaa"  
-        , File "pope_time.avi" "god bless"  
-        , Folder "pics"  
-            [ File "ape_throwing_up.jpg" "bleargh"  
-            , File "watermelon_smash.gif" "smash!!"  
-            , File "skull_man(scary).bmp" "Yikes!" 
-            , Folder "not_dick" [ File "whatever.txt" "I don't care"] 
-            ]  
-        , File "dijon_poupon.doc" "best mustard"  
-        , Folder "programs"  
-            [ File "fartwizard.exe" "10gotofart"  
-            , File "owl_bandit.dmg" "mov eax, h00t"  
-            , File "not_a_virus.exe" "really not a virus"  
-            , Folder "source code"  
-                [ File "best_hs_prog.hs" "main = print (fix error)"  
-                , File "random.hs" "main = print 4"  
-                ]  
-            ]  
-        ]  
+rm :: [Name] -> Zipper -> Maybe Zipper
+rm [] t = Just t
+rm (x:xs) (Folder name content, z) = if x `elem` map getFileNodeName content
+  then rm xs (Folder name (filter (\ y -> getFileNodeName y /= x) content), z)
+  else rm xs (Folder name content, z)
+rm _ (File _ _, _) = Nothing
+
+isFile :: FileNode -> Bool
+isFile (File _ _) = True
+isFile (Folder _ _) = False
+
+getFile :: Name -> Zipper -> Maybe FileNode
+getFile _ (File _ _, _) = Nothing
+getFile name (Folder _ nodes, _) = let filteredNodes = filter (\ node -> getFileNodeName node == name) nodes
+                                       fileNodes = filter isFile filteredNodes
+                                   in if null fileNodes then Nothing else Just (head fileNodes)
+
+cat :: [[Name]] -> Zipper -> Maybe String
+cat [] _ = Just ""
+cat (x:xs) z = mappend (fmap getContent (fmap getFileNodeContent (cdFrom (init x) z >>= getFile (last x)))) (cat xs z) 
