@@ -96,22 +96,22 @@ toStringList [] = []
 toStringList (File name _ : xs) = getName name : toStringList xs
 toStringList (Folder name _ : xs) = getName name : toStringList xs
 
+-- common function used in rm and rmdir, used in order to avoid code duplication
+rmCommon :: (FileNode -> Bool) -> [Name] -> Zipper -> Maybe Zipper
+rmCommon _ [] t = Just t
+rmCommon filteringFunction (x:xs) (Folder name content, z) = if x `elem` map getFileNodeName (filter filteringFunction content)
+  then rmCommon filteringFunction xs (Folder name (filter (\ y -> not (filteringFunction y && getFileNodeName y == x)) content), z)
+  else rmCommon filteringFunction xs (Folder name content, z)
+rmCommon _  _ (File _ _, _) = Nothing
+
 -- deletes files stored in the current folder, if one of the arguments is a folder or non existant file
 -- this function just skips it
 rm :: [Name] -> Zipper -> Maybe Zipper
-rm [] t = Just t
-rm (x:xs) (Folder name content, z) = if x `elem` map getFileNodeName (filter isFile content)
-  then rm xs (Folder name (filter (\ y -> not (isFile y && getFileNodeName y == x)) content), z)
-  else rm xs (Folder name content, z)
-rm _ (File _ _, _) = Nothing
+rm = rmCommon isFile
 
 -- same as rm but deletes folders
 rmdir :: [Name] -> Zipper -> Maybe Zipper
-rmdir [] t = Just t
-rmdir (x:xs) (Folder name content, z) = if x `elem` map getFileNodeName (filter isFolder content)
-  then rmdir xs (Folder name (filter (\ y -> not (isFolder y && getFileNodeName y == x)) content), z)
-  else rmdir xs (Folder name content, z)
-rmdir _ (File _ _, _) = Nothing
+rmdir = rmCommon isFolder
 
 -- isFile and isFolder are used to distinguish between FileNodes which are files and those which are not
 isFile :: FileNode -> Bool
